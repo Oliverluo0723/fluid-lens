@@ -1,8 +1,8 @@
 # three-mouse-distortion
 
-基於 Three.js 的可重複使用滑鼠擾動效果，專為影片背景設計。
+基於 Three.js 的可重複使用滑鼠擾動效果，適用於影片或圖片背景。
 
-將滑鼠移過影片，觸發流體位移與色差視覺效果。
+將滑鼠移過影片或圖片，觸發流體位移與色差視覺效果。
 
 ## 預覽
 
@@ -11,6 +11,7 @@
 ## 功能特色
 
 - 滑鼠驅動的流體擾動效果
+- 支援影片（`<video>`）與圖片（`<img>`）來源，依元素型別自動偵測
 - 色差效果（RGB 三通道分離）
 - 自動適應容器尺寸（行為類似 `object-fit: cover`）
 - 響應式，自動處理視窗縮放
@@ -22,10 +23,16 @@
 **HTML**
 
 ```html
+<!-- 影片來源 -->
 <section class="hero">
     <video class="hero-video" autoplay muted loop playsinline>
         <source src="./assets/video.mp4" type="video/mp4" />
     </video>
+</section>
+
+<!-- 圖片來源 -->
+<section class="hero">
+    <img class="hero-img" src="./assets/img1.png" alt="" />
 </section>
 ```
 
@@ -39,7 +46,8 @@
     overflow: hidden;
 }
 
-.hero-video {
+.hero-video,
+.hero-img {
     position: absolute;
     inset: 0;
     width: 100%;
@@ -61,9 +69,10 @@
 ```js
 import { MouseDistortion } from "./MouseDistortion.js";
 
+// 第二個參數傳 <video> 或 <img> 皆可，內部會自動判斷來源型別
 const distortion = new MouseDistortion(
     document.querySelector(".hero"),
-    document.querySelector(".hero-video"),
+    document.querySelector(".hero-video"), // 或 .hero-img
 );
 
 // 離開頁面或元件卸載時清除資源

@@ -14,13 +14,13 @@ const DEFAULTS = {
 export class MouseDistortion {
     /**
      * @param {HTMLElement} container - 放置 canvas 的容器元素
-     * @param {HTMLVideoElement} videoEl - 作為紋理來源的影片元素
+     * @param {HTMLVideoElement | HTMLImageElement} sourceEl - 作為紋理來源的影片或圖片元素
      * @param {typeof DEFAULTS} options - 選填，覆蓋預設參數
      */
-    constructor(container, videoEl, options = {}) {
+    constructor(container, sourceEl, options = {}) {
         this.config = { ...DEFAULTS, ...options };
         this.container = container;
-        this.video = videoEl;
+        this.source = sourceEl;
 
         // 追蹤滑鼠位置與速度
         this.mouse = { x: 0, y: 0, prevX: 0, prevY: 0, vX: 0, vY: 0 };
@@ -51,11 +51,9 @@ export class MouseDistortion {
         this.renderer.domElement.classList.add("hero-canvas");
         this.container.appendChild(this.renderer.domElement);
 
-        // 將影片轉為 GPU 紋理，並隱藏原始影片元素
-        const videoTexture = new THREE.VideoTexture(this.video);
-        videoTexture.minFilter = videoTexture.magFilter = THREE.LinearFilter; // 放大縮小時線性插值，畫面平滑
-        videoTexture.generateMipmaps = false; // 影片每幀都更新，不需要 Mipmap
-        this.video.style.opacity = "0";
+        // 將來源（影片或圖片）轉為 GPU 紋理，並隱藏原始元素
+        this.texture = this._createSourceTexture();
+        this.source.style.opacity = "0";
 
         // 建立低解析度的擾動場紋理
         this.dataTexture = this._createDataTexture();
@@ -64,7 +62,7 @@ export class MouseDistortion {
         const { displacement, aberration } = this.config;
         this.material = new THREE.ShaderMaterial({
             uniforms: {
-                uTexture: { value: videoTexture }, // 影片紋理
+                uTexture: { value: this.texture }, // 來源紋理（影片或圖片）
                 uDataTexture: { value: this.dataTexture }, // 擾動場紋理
             },
             vertexShader: `
@@ -104,13 +102,43 @@ export class MouseDistortion {
         );
         this.scene.add(this.mesh);
 
-        // 影片載入完成後重新計算縮放比例，確保 cover 行為正確
-        this.video.addEventListener("loadeddata", () => {
+        // 來源尺寸就緒後重算縮放比例，確保 cover 行為正確
+        const onSourceReady = () => {
             this.mesh.geometry.dispose();
             this.mesh.geometry = new THREE.PlaneGeometry(
                 ...this._getCoverScale(),
             );
-        });
+            // 圖片為靜態紋理，載入後需手動標記更新（影片由 VideoTexture 每幀處理）
+            if (!this._isVideo()) this.texture.needsUpdate = true;
+        };
+
+        if (this._isVideo()) {
+            this.source.addEventListener("loadeddata", onSourceReady);
+        } else if (this.source.complete && this.source.naturalWidth) {
+            onSourceReady(); // 圖片已快取，load 事件不會再觸發
+        } else {
+            this.source.addEventListener("load", onSourceReady);
+        }
+    }
+
+    // 來源是否為影片元素
+    _isVideo() {
+        return this.source.tagName === "VIDEO";
+    }
+
+    /**
+     * 依來源型別建立對應的 GPU 紋理
+     * 影片使用 VideoTexture（每幀自動更新）；圖片使用一般 Texture
+     */
+    _createSourceTexture() {
+        const texture = this._isVideo()
+            ? new THREE.VideoTexture(this.source)
+            : new THREE.Texture(this.source);
+        texture.minFilter = texture.magFilter = THREE.LinearFilter; // 放大縮小時線性插值，畫面平滑
+        texture.generateMipmaps = false; // 每幀更新或靜態圖片皆不需要 Mipmap
+        // 圖片若在建構時已載入完成，立即標記一次更新
+        if (!this._isVideo() && this.source.complete) texture.needsUpdate = true;
+        return texture;
     }
 
     // ─── 工具方法 ─────────────────────────────────────────────
@@ -140,17 +168,27 @@ export class MouseDistortion {
     }
 
     /**
-     * 計算讓影片以 cover 方式填滿容器所需的平面縮放比例
+     * 取得來源的原始尺寸
+     * 影片使用 videoWidth/Height，圖片使用 naturalWidth/Height，未就緒時回退 16:9
+     */
+    _getSourceSize() {
+        return this._isVideo()
+            ? [this.source.videoWidth || 16, this.source.videoHeight || 9]
+            : [this.source.naturalWidth || 16, this.source.naturalHeight || 9];
+    }
+
+    /**
+     * 計算讓來源以 cover 方式填滿容器所需的平面縮放比例
      * 類似 CSS 的 object-fit: cover
      */
     _getCoverScale() {
-        const videoAspect =
-            (this.video.videoWidth || 16) / (this.video.videoHeight || 9);
+        const [srcW, srcH] = this._getSourceSize();
+        const sourceAspect = srcW / srcH;
         const containerAspect = this.width / this.height;
         const scaleX =
-            containerAspect < videoAspect ? videoAspect / containerAspect : 1;
+            containerAspect < sourceAspect ? sourceAspect / containerAspect : 1;
         const scaleY =
-            containerAspect > videoAspect ? containerAspect / videoAspect : 1;
+            containerAspect > sourceAspect ? containerAspect / sourceAspect : 1;
         return [2 * scaleX, 2 * scaleY]; // PlaneGeometry 預設寬高各為 1，乘 2 讓它對齊正交相機的 [-1, 1] 範圍
     }
 
